@@ -1,0 +1,65 @@
+name: Classroom Autograding + Moodle Sync
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  autograde:
+    runs-on: ubuntu-latest
+    env:
+      ASSIGNMENT_NAME: "FM2 - Python Programming"
+      MOODLE_URL: ${{ secrets.MOODLE_URL }}
+      MOODLE_TOKEN: ${{ secrets.MOODLE_TOKEN }}
+      MOODLE_COURSE_ID: "21"
+      MOODLE_ACTIVITY_ID: "3680"
+      SHARED_CONFIG_REPO: "izen-shared-config"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Try to download latest GitHub to Moodle map from shared config repo
+        run: |
+          RAW_URL="https://raw.githubusercontent.com/${{ github.repository_owner }}/${SHARED_CONFIG_REPO}/main/github_moodle_map.csv"
+          echo "Trying ${RAW_URL}"
+          curl -fL "$RAW_URL" -o github_moodle_map.csv || echo "Shared map download failed. Using local fallback file if present."
+
+      - name: Extract notebook code
+        run: python scripts/extract_notebook.py
+
+      - name: Run tests and write report
+        run: pytest tests/ --json-report --json-report-file=report.json -q
+
+      - name: Compute score
+        if: always()
+        run: python scripts/sync_grade.py --mode compute
+
+      - name: Upload grading artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grading-artifacts
+          path: |
+            report.json
+            results.json
+            student_solution.py
+
+      - name: Sync grade to Moodle
+        if: always()
+        continue-on-error: true
+        run: python scripts/sync_grade.py --mode sync
